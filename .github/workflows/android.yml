@@ -26,28 +26,45 @@ jobs:
       - name: Generate Android and Windows platform files
         run: flutter create --platforms=android,windows --project-name anbarban .
 
-      - name: Set Android compile SDK to 36
+      - name: Set and verify Android compile SDK to 36
         run: |
           python3 - <<'PYCODE'
           from pathlib import Path
           import re, sys
-          files = [Path('android/app/build.gradle.kts'), Path('android/app/build.gradle')]
-          for path in files:
-              if not path.exists():
-                  continue
-              text = path.read_text()
-              patterns = [
-                  r'(?m)^([ \t]*compileSdk[ \t]*=[ \t]*)flutter\.compileSdkVersion\b',
-                  r'(?m)^([ \t]*compileSdkVersion[ \t]+)flutter\.compileSdkVersion\b',
-                  r'(?m)^([ \t]*compileSdk[ \t]+)flutter\.compileSdkVersion\b',
-              ]
-              for pattern in patterns:
-                  updated, count = re.subn(pattern, r'\g<1>36', text, count=1)
-                  if count:
-                      path.write_text(updated)
-                      print(f'compileSdk=36 تنظیم شد: {path}')
-                      sys.exit(0)
-          sys.exit('خطا: تنظیم compileSdk پیدا نشد؛ ساخت متوقف شد.')
+
+          files = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle"),
+          ]
+          path = next((p for p in files if p.exists()), None)
+          if path is None:
+              sys.exit("خطا: فایل Gradle برنامه پیدا نشد.")
+
+          text = path.read_text()
+          patterns = [
+              r"(?m)^([ \t]*compileSdk[ \t]*=[ \t]*).*$",
+              r"(?m)^([ \t]*compileSdkVersion[ \t]+).*$",
+              r"(?m)^([ \t]*compileSdk[ \t]+).*$",
+          ]
+
+          for pattern in patterns:
+              updated, count = re.subn(pattern, r"\g<1>36", text, count=1)
+              if count:
+                  text = updated
+                  break
+          else:
+              sys.exit("خطا: خط compileSdk در فایل Gradle پیدا نشد.")
+
+          path.write_text(text)
+          print(f"فایل تنظیم‌شده: {path}")
+          for line in text.splitlines():
+              if re.match(r"^\s*compileSdk(?:Version)?\b", line):
+                  print(f"تنظیم نهایی: {line.strip()}")
+                  if not re.search(r"\b36\b", line):
+                      sys.exit("خطا: compileSdk برابر 36 نیست.")
+                  break
+          else:
+              sys.exit("خطا: مقدار compileSdk تأیید نشد.")
           PYCODE
 
       - name: Get dependencies
