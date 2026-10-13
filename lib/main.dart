@@ -1023,7 +1023,7 @@ Future<Map<String, dynamic>?> showMovementDialog(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<int>(
-                    value: selected,
+                    initialValue: selected,
                     isExpanded: true,
                     decoration: const InputDecoration(labelText: 'انتخاب کالا'),
                     items: products.map((x) {
