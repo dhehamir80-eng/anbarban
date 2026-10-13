@@ -26,6 +26,30 @@ jobs:
       - name: Generate Android and Windows platform files
         run: flutter create --platforms=android,windows --project-name anbarban .
 
+      - name: Set Android compile SDK to 36
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import re, sys
+          files = [Path('android/app/build.gradle.kts'), Path('android/app/build.gradle')]
+          for path in files:
+              if not path.exists():
+                  continue
+              text = path.read_text()
+              patterns = [
+                  r'(?m)^([ \t]*compileSdk[ \t]*=[ \t]*)flutter\.compileSdkVersion\b',
+                  r'(?m)^([ \t]*compileSdkVersion[ \t]+)flutter\.compileSdkVersion\b',
+                  r'(?m)^([ \t]*compileSdk[ \t]+)flutter\.compileSdkVersion\b',
+              ]
+              for pattern in patterns:
+                  updated, count = re.subn(pattern, r'\g<1>36', text, count=1)
+                  if count:
+                      path.write_text(updated)
+                      print(f'compileSdk=36 تنظیم شد: {path}')
+                      sys.exit(0)
+          sys.exit('خطا: تنظیم compileSdk پیدا نشد؛ ساخت متوقف شد.')
+          PYCODE
+
       - name: Get dependencies
         run: flutter pub get
 
