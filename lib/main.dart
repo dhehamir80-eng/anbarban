@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:anbarban/number_parser.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
@@ -27,40 +28,6 @@ String money(dynamic value) {
 }
 
 String number(dynamic value) => fa('${(value as num?) ?? 0}');
-
-double parseNumber(String value) {
-  const faDigits = '۰۱۲۳۴۵۶۷۸۹';
-  const arDigits = '٠١٢٣٤٥٦٧٨٩';
-  for (var i = 0; i < 10; i++) {
-    value = value.replaceAll(faDigits[i], '$i');
-    value = value.replaceAll(arDigits[i], '$i');
-  }
-  value = value.replaceAll(',', '').replaceAll('٬', '').trim();
-  return double.tryParse(value) ?? 0;
-}
-
-double? tryParseNumber(String value) {
-  const faDigits = '۰۱۲۳۴۵۶۷۸۹';
-  const arDigits = '٠١٢٣٤٥٦٧٨٩';
-
-  value = value.trim();
-  for (var i = 0; i < 10; i++) {
-    value = value.replaceAll(faDigits[i], '$i');
-    value = value.replaceAll(arDigits[i], '$i');
-  }
-
-  value = value
-      .replaceAll('٫', '.')
-      .replaceAll(',', '')
-      .replaceAll('٬', '')
-      .trim();
-
-  if (value.isEmpty) return null;
-
-  final result = double.tryParse(value);
-  if (result == null || !result.isFinite) return null;
-  return result;
-}
 
 String dateText(String? value) {
   if (value == null) return '—';
@@ -118,6 +85,24 @@ class InventoryDb {
   Future<List<Map<String, dynamic>>> movements() async {
     final db = await database;
     return db.query('movements', orderBy: 'id DESC', limit: 500);
+  }
+
+  Future<Map<String, double>> movementTotals() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'in' THEN quantity ELSE 0 END), 0)
+          AS total_in,
+        COALESCE(SUM(CASE WHEN type = 'out' THEN quantity ELSE 0 END), 0)
+          AS total_out
+      FROM movements
+    ''');
+
+    final row = rows.first;
+    return {
+      'in': (row['total_in'] as num).toDouble(),
+      'out': (row['total_out'] as num).toDouble(),
+    };
   }
 
   Future<void> saveProduct(Map<String, dynamic> data, {int? id}) async {
@@ -394,6 +379,7 @@ class _HomePageState extends State<HomePage> {
   String search = '';
   List<Map<String, dynamic>> products = [];
   List<Map<String, dynamic>> movements = [];
+  Map<String, double> movementTotals = {'in': 0, 'out': 0};
 
   @override
   void initState() {
@@ -405,10 +391,12 @@ class _HomePageState extends State<HomePage> {
     try {
       final ps = await InventoryDb.instance.products();
       final ms = await InventoryDb.instance.movements();
+      final totals = await InventoryDb.instance.movementTotals();
       if (!mounted) return;
       setState(() {
         products = ps;
         movements = ms;
+        movementTotals = totals;
         loading = false;
       });
     } catch (e) {
@@ -1019,12 +1007,8 @@ class _HomePageState extends State<HomePage> {
             s +
             (x['quantity'] as num).toDouble() *
                 (x['buy_price'] as num).toDouble());
-    final inCount = movements
-        .where((m) => m['type'] == 'in')
-        .fold<double>(0, (s, m) => s + (m['quantity'] as num).toDouble());
-    final outCount = movements
-        .where((m) => m['type'] == 'out')
-        .fold<double>(0, (s, m) => s + (m['quantity'] as num).toDouble());
+    final inCount = movementTotals['in'] ?? 0;
+    final outCount = movementTotals['out'] ?? 0;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -1372,8 +1356,13 @@ Future<Map<String, dynamic>?> showMovementDialog(
                     controller: qty,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(labelText: 'تعداد *'),
-                    validator: (v) =>
-                        v == null || parseNumber(v) <= 0 ? 'عدد بیشتر از صفر وارد کن' : null,
+                    validator: (v) {
+                      final value = v == null ? null : tryParseNumber(v);
+                      if (value == null || value <= 0) {
+                        return 'عدد معتبر و بیشتر از صفر وارد کن';
+                      }
+                      return null;
+                    },
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -1394,7 +1383,7 @@ Future<Map<String, dynamic>?> showMovementDialog(
                 if (!formKey.currentState!.validate() || selected == null) return;
                 Navigator.pop(ctx, <String, dynamic>{
                   'product_id': selected!,
-                  'quantity': parseNumber(qty.text),
+                  'quantity': tryParseNumber(qty.text)!,
                   'note': note.text.trim(),
                 });
               },
