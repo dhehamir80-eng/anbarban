@@ -39,6 +39,29 @@ double parseNumber(String value) {
   return double.tryParse(value) ?? 0;
 }
 
+double? tryParseNumber(String value) {
+  const faDigits = '۰۱۲۳۴۵۶۷۸۹';
+  const arDigits = '٠١٢٣٤٥٦٧٨٩';
+
+  value = value.trim();
+  for (var i = 0; i < 10; i++) {
+    value = value.replaceAll(faDigits[i], '$i');
+    value = value.replaceAll(arDigits[i], '$i');
+  }
+
+  value = value
+      .replaceAll('٫', '.')
+      .replaceAll(',', '')
+      .replaceAll('٬', '')
+      .trim();
+
+  if (value.isEmpty) return null;
+
+  final result = double.tryParse(value);
+  if (result == null || !result.isFinite) return null;
+  return result;
+}
+
 String dateText(String? value) {
   if (value == null) return '—';
   final d = DateTime.tryParse(value)?.toLocal();
@@ -1208,12 +1231,24 @@ Future<Map<String, dynamic>?> showProductDialog(
                     controller: buy,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'قیمت خرید (تومان)'),
+                    validator: (v) {
+                      final n = tryParseNumber(v ?? '');
+                      if (n == null) return 'قیمت خرید را به‌صورت عدد وارد کن';
+                      if (n < 0) return 'قیمت منفی مجاز نیست';
+                      return null;
+                    },
                   ),
                   const SizedBox(height: 10),
                   TextFormField(
                     controller: sell,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'قیمت فروش (تومان)'),
+                    validator: (v) {
+                      final n = tryParseNumber(v ?? '');
+                      if (n == null) return 'قیمت فروش را به‌صورت عدد وارد کن';
+                      if (n < 0) return 'قیمت منفی مجاز نیست';
+                      return null;
+                    },
                   ),
                   if (!editing) ...[
                     const SizedBox(height: 10),
@@ -1221,6 +1256,13 @@ Future<Map<String, dynamic>?> showProductDialog(
                       controller: qty,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(labelText: 'موجودی اولیه'),
+                      validator: (v) {
+                        if ((v ?? '').trim().isEmpty) return null;
+                        final n = tryParseNumber(v ?? '');
+                        if (n == null) return 'موجودی را به‌صورت عدد وارد کن';
+                        if (n < 0) return 'موجودی منفی مجاز نیست';
+                        return null;
+                      },
                     ),
                   ],
                   const SizedBox(height: 10),
@@ -1228,6 +1270,12 @@ Future<Map<String, dynamic>?> showProductDialog(
                     controller: min,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'حداقل موجودی برای هشدار'),
+                    validator: (v) {
+                      final n = tryParseNumber(v ?? '');
+                      if (n == null) return 'حداقل موجودی را به‌صورت عدد وارد کن';
+                      if (n < 0) return 'حداقل موجودی منفی مجاز نیست';
+                      return null;
+                    },
                   ),
                   if (editing)
                     const Padding(
@@ -1250,10 +1298,12 @@ Future<Map<String, dynamic>?> showProductDialog(
           FilledButton(
             onPressed: () {
               if (!formKey.currentState!.validate()) return;
-              final b = parseNumber(buy.text);
-              final s = parseNumber(sell.text);
-              final q = parseNumber(qty.text);
-              final m = parseNumber(min.text);
+              final b = tryParseNumber(buy.text)!;
+              final s = tryParseNumber(sell.text)!;
+              final q = qty.text.trim().isEmpty
+                  ? 0.0
+                  : tryParseNumber(qty.text)!;
+              final m = tryParseNumber(min.text)!;
               if (b < 0 || s < 0 || q < 0 || m < 0) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('مقادیر منفی مجاز نیستند.')),
