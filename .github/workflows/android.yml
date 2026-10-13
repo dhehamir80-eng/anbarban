@@ -70,6 +70,52 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Patch file_picker Android compile SDK to 36
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          import re, sys
+
+          root = Path.home() / ".pub-cache/hosted/pub.dev"
+          candidates = sorted(root.glob("file_picker-*/android/build.gradle"))
+          candidates += sorted(root.glob("file_picker-*/android/build.gradle.kts"))
+
+          if not candidates:
+              sys.exit("خطا: فایل Gradle افزونه file_picker پیدا نشد.")
+
+          patched = []
+          for path in candidates:
+              lines = path.read_text().splitlines(keepends=True)
+              for i, line in enumerate(lines):
+                  if re.match(r"^\s*compileSdk(?:Version)?\b", line):
+                      if re.match(r"^\s*compileSdkVersion\b", line):
+                          lines[i] = re.sub(
+                              r"(^\s*compileSdkVersion\s+).+$",
+                              r"\g<1>36", line
+                          )
+                      elif re.match(r"^\s*compileSdk\s*=", line):
+                          lines[i] = re.sub(
+                              r"(^\s*compileSdk\s*=\s*).+$",
+                              r"\g<1>36", line
+                          )
+                      else:
+                          lines[i] = re.sub(
+                              r"(^\s*compileSdk\s+).+$",
+                              r"\g<1>36", line
+                          )
+
+                      path.write_text("".join(lines))
+                      print(f"اصلاح شد: {path}")
+                      print(f"تنظیم: {lines[i].strip()}")
+                      if not re.search(r"\b36\b", lines[i]):
+                          sys.exit("خطا: تأیید SDK افزونه ناموفق بود.")
+                      patched.append(path)
+                      break
+
+          if not patched:
+              sys.exit("خطا: خط compileSdk در فایل افزونه پیدا نشد.")
+          PYCODE
+
       - name: Remove incompatible default test
         run: rm -f test/widget_test.dart
 
