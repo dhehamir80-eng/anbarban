@@ -1,3 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
@@ -124,6 +130,138 @@ class InventoryDb {
     });
   }
 
+
+  Future<Map<String, dynamic>> createBackupData() async {
+    final db = await database;
+    final productRows = await db.query('products', orderBy: 'id ASC');
+    final movementRows = await db.query('movements', orderBy: 'id ASC');
+
+    return {
+      'format': 'anbarban_backup',
+      'schema_version': 1,
+      'exported_at': DateTime.now().toIso8601String(),
+      'products': productRows,
+      'movements': movementRows,
+    };
+  }
+
+  Future<void> restoreBackupData(Map<String, dynamic> data) async {
+    if (data['format'] != 'anbarban_backup' ||
+        data['schema_version'] != 1) {
+      throw Exception('قالب یا نسخه فایل پشتیبان پشتیبانی نمی‌شود.');
+    }
+
+    final rawProducts = data['products'];
+    final rawMovements = data['movements'];
+
+    if (rawProducts is! List || rawMovements is! List) {
+      throw Exception('ساختار فایل پشتیبان معتبر نیست.');
+    }
+
+    if (rawProducts.length > 100000 || rawMovements.length > 1000000) {
+      throw Exception('تعداد رکوردهای فایل بیش از حد مجاز است.');
+    }
+
+    final productsToRestore = <Map<String, Object?>>[];
+    final movementsToRestore = <Map<String, Object?>>[];
+    final productIds = <int>{};
+    final movementIds = <int>{};
+
+    bool validDate(Object? value) =>
+        value is String &&
+        value.isNotEmpty &&
+        DateTime.tryParse(value) != null;
+
+    bool validNumber(Object? value, {bool allowZero = true}) =>
+        value is num &&
+        value.isFinite &&
+        (allowZero ? value >= 0 : value > 0);
+
+    for (final item in rawProducts) {
+      if (item is! Map) {
+        throw Exception('رکورد کالا در فایل معتبر نیست.');
+      }
+      final row = Map<String, dynamic>.from(item);
+      final id = row['id'];
+
+      if (id is! int || id <= 0 || !productIds.add(id)) {
+        throw Exception('شناسه کالای تکراری یا نامعتبر است.');
+      }
+      if (row['name'] is! String ||
+          (row['name'] as String).trim().isEmpty ||
+          row['sku'] is! String ||
+          row['category'] is! String ||
+          !validNumber(row['buy_price']) ||
+          !validNumber(row['sell_price']) ||
+          !validNumber(row['quantity']) ||
+          !validNumber(row['min_quantity']) ||
+          !validDate(row['created_at'])) {
+        throw Exception('اطلاعات یکی از کالاها معتبر نیست.');
+      }
+
+      productsToRestore.add({
+        'id': id,
+        'name': row['name'],
+        'sku': row['sku'],
+        'category': row['category'],
+        'buy_price': row['buy_price'],
+        'sell_price': row['sell_price'],
+        'quantity': row['quantity'],
+        'min_quantity': row['min_quantity'],
+        'created_at': row['created_at'],
+      });
+    }
+
+    for (final item in rawMovements) {
+      if (item is! Map) {
+        throw Exception('رکورد گردش کالا در فایل معتبر نیست.');
+      }
+      final row = Map<String, dynamic>.from(item);
+      final id = row['id'];
+      final productId = row['product_id'];
+
+      if (id is! int || id <= 0 || !movementIds.add(id)) {
+        throw Exception('شناسه گردش تکراری یا نامعتبر است.');
+      }
+      if (productId != null &&
+          (productId is! int || productId <= 0)) {
+        throw Exception('شناسه کالای مرتبط با گردش معتبر نیست.');
+      }
+      if (row['product_name'] is! String ||
+          (row['type'] != 'in' && row['type'] != 'out') ||
+          !validNumber(row['quantity'], allowZero: false) ||
+          row['note'] is! String ||
+          !validDate(row['created_at'])) {
+        throw Exception('اطلاعات یکی از گردش‌های کالا معتبر نیست.');
+      }
+
+      movementsToRestore.add({
+        'id': id,
+        'product_id': productId,
+        'product_name': row['product_name'],
+        'type': row['type'],
+        'quantity': row['quantity'],
+        'note': row['note'],
+        'created_at': row['created_at'],
+      });
+    }
+
+    final db = await database;
+
+    // همه تغییرات در یک تراکنش‌اند؛ در صورت خطا، تراکنش لغو می‌شود.
+    await db.transaction((txn) async {
+      await txn.delete('movements');
+      await txn.delete('products');
+
+      for (final row in productsToRestore) {
+        await txn.insert('products', row);
+      }
+      for (final row in movementsToRestore) {
+        await txn.insert('movements', row);
+      }
+    });
+  }
+
   Future<void> deleteProduct(int id) async {
     final db = await database;
     await db.delete('products', where: 'id = ?', whereArgs: [id]);
@@ -135,7 +273,12 @@ class InventoryDb {
     required double quantity,
     required String note,
   }) async {
-    if (quantity <= 0) throw Exception('مقدار باید بیشتر از صفر باشد.');
+    if (type != 'in' && type != 'out') {
+      throw Exception('نوع گردش کالا معتبر نیست.');
+    }
+    if (!quantity.isFinite || quantity <= 0) {
+      throw Exception('مقدار باید عددی معتبر و بیشتر از صفر باشد.');
+    }
     final db = await database;
     await db.transaction((txn) async {
       final rows = await txn.query(
@@ -332,6 +475,110 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+
+  Future<void> exportBackup() async {
+    try {
+      final data = await InventoryDb.instance.createBackupData();
+      final jsonText = const JsonEncoder.withIndent('  ').convert(data);
+      final directory = await getTemporaryDirectory();
+      final stamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '-');
+      final file = File(p.join(directory.path, 'anbarban-backup-$stamp.json'));
+
+      await file.writeAsString(jsonText, flush: true);
+
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: 'نسخه پشتیبان اطلاعات انباربان',
+      );
+    } catch (e) {
+      message('ساخت یا اشتراک‌گذاری پشتیبان ناموفق بود: $e');
+    }
+  }
+
+  Future<void> importBackup() async {
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        allowMultiple: false,
+        withData: true,
+      );
+
+      if (picked == null || picked.files.isEmpty) return;
+
+      final file = picked.files.single;
+      final bytes = file.bytes;
+
+      if (file.size > 20 * 1024 * 1024) {
+        message('حجم فایل پشتیبان نباید بیشتر از ۲۰ مگابایت باشد.');
+        return;
+      }
+      if (bytes == null) {
+        message('خواندن فایل انتخاب‌شده امکان‌پذیر نیست.');
+        return;
+      }
+
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) {
+        message('ساختار فایل پشتیبان معتبر نیست.');
+        return;
+      }
+
+      final backup = Map<String, dynamic>.from(decoded);
+      final products = backup['products'];
+      final movements = backup['movements'];
+
+      if (backup['format'] != 'anbarban_backup' ||
+          backup['schema_version'] != 1 ||
+          products is! List ||
+          movements is! List) {
+        message('این فایل، پشتیبان معتبر انباربان نیست.');
+        return;
+      }
+
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: const Text('جایگزینی اطلاعات انبار؟'),
+            content: Text(
+              'این فایل شامل ${fa('${products.length}')} کالا و '
+              '${fa('${movements.length}')} گردش است.\n\n'
+              'با ادامه، اطلاعات فعلی جایگزین می‌شود. '
+              'قبل از ادامه، از اطلاعات فعلی نسخه پشتیبان بگیر.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('انصراف'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('جایگزینی اطلاعات'),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (confirmed != true) return;
+
+      await InventoryDb.instance.restoreBackupData(backup);
+      await refresh();
+
+      message(
+        'بازیابی موفق بود: ${fa('${products.length}')} کالا و '
+        '${fa('${movements.length}')} گردش.',
+      );
+    } catch (e) {
+      message('بازیابی انجام نشد؛ اطلاعات فعلی باید حفظ شده باشند. $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final titles = ['داشبورد', 'کالاها', 'گردش کالا', 'گزارش‌ها'];
@@ -360,6 +607,38 @@ class _HomePageState extends State<HomePage> {
               tooltip: 'به‌روزرسانی',
               onPressed: refresh,
               icon: const Icon(Icons.refresh_rounded),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'پشتیبان‌گیری و بازیابی',
+              onSelected: (value) {
+                if (value == 'backup') {
+                  exportBackup();
+                } else if (value == 'restore') {
+                  importBackup();
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'backup',
+                  child: Row(
+                    children: [
+                      Icon(Icons.backup_outlined),
+                      SizedBox(width: 10),
+                      Text('تهیه نسخه پشتیبان'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'restore',
+                  child: Row(
+                    children: [
+                      Icon(Icons.restore_rounded),
+                      SizedBox(width: 10),
+                      Text('بازیابی نسخه پشتیبان'),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
