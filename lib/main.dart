@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:anbarban/number_parser.dart';
+import 'package:anbarban/formatters.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
@@ -13,21 +14,15 @@ import 'package:sqflite/sqflite.dart';
 const green = Color(0xFF176B55);
 const bg = Color(0xFFF5F7F6);
 
-String fa(String value) {
-  const en = '0123456789';
-  const faDigits = '۰۱۲۳۴۵۶۷۸۹';
-  for (var i = 0; i < 10; i++) {
-    value = value.replaceAll(en[i], faDigits[i]);
-  }
-  return value;
-}
-
 String money(dynamic value) {
   final n = (value as num?) ?? 0;
-  return '${fa(n.toStringAsFixed(n == n.roundToDouble() ? 0 : 2))} تومان';
+  return formatMoney(n);
 }
 
-String number(dynamic value) => fa('${(value as num?) ?? 0}');
+String number(dynamic value) {
+  final n = (value as num?) ?? 0;
+  return formatNumber(n);
+}
 
 String dateText(String? value) {
   if (value == null) return '—';
@@ -97,6 +92,29 @@ class InventoryDb {
           AS total_out
       FROM movements
     ''');
+
+    final row = rows.first;
+    return {
+      'in': (row['total_in'] as num).toDouble(),
+      'out': (row['total_out'] as num).toDouble(),
+    };
+  }
+
+  Future<Map<String, double>> movementTotalsForDay(DateTime day) async {
+    final db = await database;
+    final date = '${day.year.toString().padLeft(4, '0')}-'
+        '${day.month.toString().padLeft(2, '0')}-'
+        '${day.day.toString().padLeft(2, '0')}';
+
+    final rows = await db.rawQuery('''
+      SELECT
+        COALESCE(SUM(CASE WHEN type = 'in' THEN quantity ELSE 0 END), 0)
+          AS total_in,
+        COALESCE(SUM(CASE WHEN type = 'out' THEN quantity ELSE 0 END), 0)
+          AS total_out
+      FROM movements
+      WHERE substr(created_at, 1, 10) = ?
+    ''', [date]);
 
     final row = rows.first;
     return {
@@ -380,6 +398,7 @@ class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> products = [];
   List<Map<String, dynamic>> movements = [];
   Map<String, double> movementTotals = {'in': 0, 'out': 0};
+  Map<String, double> todayMovementTotals = {'in': 0, 'out': 0};
 
   @override
   void initState() {
@@ -392,11 +411,14 @@ class _HomePageState extends State<HomePage> {
       final ps = await InventoryDb.instance.products();
       final ms = await InventoryDb.instance.movements();
       final totals = await InventoryDb.instance.movementTotals();
+      final todayTotals = await InventoryDb.instance
+          .movementTotalsForDay(DateTime.now());
       if (!mounted) return;
       setState(() {
         products = ps;
         movements = ms;
         movementTotals = totals;
+        todayMovementTotals = todayTotals;
         loading = false;
       });
     } catch (e) {
@@ -719,20 +741,8 @@ class _HomePageState extends State<HomePage> {
             sum +
             (x['quantity'] as num).toDouble() *
                 (x['buy_price'] as num).toDouble());
-    final today = DateTime.now();
-    final todayMoves = movements.where((m) {
-      final d = DateTime.tryParse(m['created_at'] as String? ?? '');
-      return d != null &&
-          d.year == today.year &&
-          d.month == today.month &&
-          d.day == today.day;
-    }).toList();
-    final todayIn = todayMoves
-        .where((m) => m['type'] == 'in')
-        .fold<double>(0, (s, m) => s + (m['quantity'] as num).toDouble());
-    final todayOut = todayMoves
-        .where((m) => m['type'] == 'out')
-        .fold<double>(0, (s, m) => s + (m['quantity'] as num).toDouble());
+    final todayIn = todayMovementTotals['in'] ?? 0;
+    final todayOut = todayMovementTotals['out'] ?? 0;
 
     return ListView(
       padding: const EdgeInsets.all(16),

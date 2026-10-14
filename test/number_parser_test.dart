@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:anbarban/number_parser.dart';
+import 'package:anbarban/formatters.dart';
 
 void main() {
   group('tryParseNumber', () {
@@ -38,6 +39,47 @@ void main() {
 
     test('parses Persian digits', () {
       expect(parseNumber('۱۲۳'), 123);
+    });
+  });
+
+  group('formatNumber', () {
+    test('groups thousands and uses Persian digits', () {
+      expect(formatNumber(1234567), '۱٬۲۳۴٬۵۶۷');
+    });
+
+    test('formats decimal values without trailing zeros', () {
+      expect(formatNumber(1234567.5), '۱٬۲۳۴٬۵۶۷٫۵');
+      expect(formatNumber(12.34), '۱۲٫۳۴');
+      expect(formatNumber(12.0), '۱۲');
+    });
+
+    test('formats negative values', () {
+      expect(formatNumber(-1234.5), '-۱٬۲۳۴٫۵');
+    });
+
+    test('rounds to the requested decimal precision', () {
+      expect(formatNumber(12.345, maxDecimals: 2), '۱۲٫۳۵');
+      expect(formatNumber(12.345, maxDecimals: 1), '۱۲٫۳');
+    });
+
+    test('handles non-finite values safely', () {
+      expect(formatNumber(double.nan), '۰');
+      expect(formatNumber(double.infinity), '۰');
+    });
+
+    test('rejects invalid decimal precision', () {
+      expect(() => formatNumber(1, maxDecimals: -1), throwsArgumentError);
+      expect(() => formatNumber(1, maxDecimals: 11), throwsArgumentError);
+    });
+  });
+
+  group('formatMoney', () {
+    test('adds the currency after a grouped amount', () {
+      expect(formatMoney(1234567.5), '۱٬۲۳۴٬۵۶۷٫۵ تومان');
+    });
+
+    test('supports a custom currency label', () {
+      expect(formatMoney(2500, currency: 'ریال'), '۲٬۵۰۰ ریال');
     });
   });
 }
